@@ -1,4 +1,4 @@
-name: Octoplex Streaming
+name: Octoplex + Tailscale
 
 on:
   workflow_dispatch:
@@ -10,6 +10,82 @@ jobs:
 
     steps:
 
+      # =========================
+      # 1. Clone Octoplex
+      # =========================
+      - name: Clone Octoplex
+        run: |
+          git clone https://github.com/rfwatson/octoplex.git
+          cd octoplex
+          git submodule update --init --recursive
+          ls -la
+
+      # =========================
+      # 2. Install Rust
+      # =========================
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y
+
+          source "$HOME/.cargo/env"
+
+          rustc --version
+          cargo --version
+
+      # =========================
+      # 3. Build Octoplex binary
+      # =========================
+      - name: Build Octoplex
+        run: |
+          source "$HOME/.cargo/env"
+
+          cd octoplex
+
+          cargo build --release
+
+          echo "===== TARGET ====="
+          ls -lah target/release/
+
+      # =========================
+      # 4. Prepare Docker build
+      # =========================
+      - name: Prepare Docker
+        run: |
+          cd octoplex
+
+          BIN=$(find target/release -maxdepth 1 -type f -executable -name "octoplex" | head -n 1)
+
+          if [ -z "$BIN" ]; then
+            echo "ERROR: octoplex binary not found"
+            find target/release -maxdepth 1 -type f -executable -print
+            exit 1
+          fi
+
+          echo "Found binary:"
+          echo "$BIN"
+
+          cp "$BIN" ./octoplex
+
+          chmod +x ./octoplex
+
+          ls -lah ./octoplex
+
+      # =========================
+      # 5. Build Docker image
+      # =========================
+      - name: Build Docker Image
+        run: |
+          cd octoplex
+
+          docker build \
+            --no-cache \
+            -t octoplex:latest \
+            .
+
+      # =========================
+      # 6. Install Tailscale
+      # =========================
       - name: Install Tailscale
         run: |
           curl -fsSL https://tailscale.com/install.sh | sh
@@ -18,31 +94,26 @@ jobs:
             --auth-key="${{ secrets.TS_AUTHKEY }}" \
             --hostname="github-octoplex"
 
+      # =========================
+      # 7. Get Tailscale IP
+      # =========================
       - name: Show Tailscale IP
         run: |
+          IP=$(sudo tailscale ip -4)
+
+          echo ""
           echo "======================================"
-          echo "TAILSCALE IP"
-          sudo tailscale ip -4
+          echo "       OCTOPLEX TAILSCALE"
           echo "======================================"
+          echo "IP: $IP"
+          echo "WEB: http://$IP:8080"
+          echo "RTMP: rtmp://$IP:1935"
+          echo "======================================"
+          echo ""
 
-      - name: Clone Octoplex
-        run: |
-          git clone https://github.com/rfwatson/octoplex.git
-          cd octoplex
-          ls -la
-
-      - name: Find Docker files
-        run: |
-          cd octoplex
-          find . -maxdepth 3 \
-            \( -iname "Dockerfile" -o -iname "docker-compose.yml" \) \
-            -print
-
-      - name: Build Octoplex
-        run: |
-          cd octoplex
-          docker build -t octoplex:latest .
-
+      # =========================
+      # 8. Start Octoplex
+      # =========================
       - name: Start Octoplex
         run: |
           docker rm -f octoplex 2>/dev/null || true
@@ -52,31 +123,49 @@ jobs:
             --restart unless-stopped \
             -p 8080:8080 \
             -p 1935:1935 \
+            -p 1936:1936 \
+            -v octoplex-data:/data \
             octoplex:latest
 
+      # =========================
+      # 9. Check container
+      # =========================
       - name: Check Octoplex
         run: |
           sleep 15
 
-          echo "========== CONTAINER =========="
-          docker ps
+          echo "========== DOCKER =========="
+          docker ps -a
 
+          echo ""
           echo "========== LOGS =========="
-          docker logs --tail 150 octoplex
+          docker logs --tail 200 octoplex
 
+          echo ""
+          echo "========== PORTS =========="
+          sudo ss -lntup
+
+          echo ""
           echo "========== TAILSCALE =========="
-          IP=$(sudo tailscale ip -4)
-          echo "IP: $IP"
-          echo "WEB: http://$IP:8080"
+          sudo tailscale ip -4
 
-      - name: Keep Octoplex alive
+      # =========================
+      # 10. Keep server alive
+      # =========================
+      - name: Keep Octoplex Alive
         run: |
           while true; do
+            echo ""
             echo "======================================"
             date
+            echo "Octoplex:"
             docker ps --filter "name=octoplex"
-            echo "Tailscale:"
+
+            echo ""
+            echo "Tailscale IP:"
             sudo tailscale ip -4
+
             echo "======================================"
+
             sleep 60
           done
