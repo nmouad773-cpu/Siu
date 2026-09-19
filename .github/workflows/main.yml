@@ -1,4 +1,4 @@
-name: Octoplex
+name: Octoplex Streaming
 
 on:
   workflow_dispatch:
@@ -9,53 +9,74 @@ jobs:
     timeout-minutes: 350
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
       - name: Install Tailscale
         run: |
           curl -fsSL https://tailscale.com/install.sh | sh
+
           sudo tailscale up \
             --auth-key="${{ secrets.TS_AUTHKEY }}" \
             --hostname="github-octoplex"
 
-      - name: Tailscale IP
+      - name: Show Tailscale IP
         run: |
-          IP=$(sudo tailscale ip -4)
-          echo "================================"
-          echo "Tailscale IP: $IP"
-          echo "================================"
+          echo "======================================"
+          echo "TAILSCALE IP"
+          sudo tailscale ip -4
+          echo "======================================"
+
+      - name: Clone Octoplex
+        run: |
+          git clone https://github.com/rfwatson/octoplex.git
+          cd octoplex
+          ls -la
+
+      - name: Find Docker files
+        run: |
+          cd octoplex
+          find . -maxdepth 3 \
+            \( -iname "Dockerfile" -o -iname "docker-compose.yml" \) \
+            -print
 
       - name: Build Octoplex
         run: |
+          cd octoplex
           docker build -t octoplex:latest .
 
       - name: Start Octoplex
         run: |
+          docker rm -f octoplex 2>/dev/null || true
+
           docker run -d \
             --name octoplex \
             --restart unless-stopped \
             -p 8080:8080 \
             -p 1935:1935 \
-            -p 1936:1936 \
             octoplex:latest
 
-      - name: Check
+      - name: Check Octoplex
         run: |
-          sleep 10
+          sleep 15
+
+          echo "========== CONTAINER =========="
           docker ps
-          docker logs --tail 100 octoplex
 
+          echo "========== LOGS =========="
+          docker logs --tail 150 octoplex
+
+          echo "========== TAILSCALE =========="
           IP=$(sudo tailscale ip -4)
+          echo "IP: $IP"
+          echo "WEB: http://$IP:8080"
 
-          echo "================================"
-          echo "WEB:"
-          echo "http://$IP:8080"
-          echo "================================"
-
-      - name: Keep running
+      - name: Keep Octoplex alive
         run: |
           while true; do
-            docker ps --filter name=octoplex
+            echo "======================================"
+            date
+            docker ps --filter "name=octoplex"
+            echo "Tailscale:"
+            sudo tailscale ip -4
+            echo "======================================"
             sleep 60
           done
