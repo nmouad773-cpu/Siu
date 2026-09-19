@@ -1,12 +1,10 @@
-name: Shed Streaming
+name: Octoplex
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 */5 * * *"
 
 jobs:
-  shed:
+  octoplex:
     runs-on: ubuntu-latest
     timeout-minutes: 350
 
@@ -19,51 +17,45 @@ jobs:
           curl -fsSL https://tailscale.com/install.sh | sh
           sudo tailscale up \
             --auth-key="${{ secrets.TS_AUTHKEY }}" \
-            --hostname="github-shed"
+            --hostname="github-octoplex"
 
-      - name: Get Tailscale IP
+      - name: Tailscale IP
         run: |
+          IP=$(sudo tailscale ip -4)
           echo "================================"
-          echo "Shed Tailscale IP:"
-          sudo tailscale ip -4
-          echo "================================"
-          echo "Shed URL:"
-          echo "http://$(sudo tailscale ip -4):8080"
+          echo "Tailscale IP: $IP"
           echo "================================"
 
-      - name: Create Shed data
+      - name: Build Octoplex
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/shed-data"
+          docker build -t octoplex:latest .
 
-      - name: Start Shed
+      - name: Start Octoplex
         run: |
-          docker rm -f shed 2>/dev/null || true
-
           docker run -d \
-            --name shed \
+            --name octoplex \
             --restart unless-stopped \
             -p 8080:8080 \
             -p 1935:1935 \
-            -p 9000:9000/udp \
-            -v "$GITHUB_WORKSPACE/shed-data:/data" \
-            ghcr.io/muxshed/shed:latest
+            -p 1936:1936 \
+            octoplex:latest
 
-      - name: Show status
+      - name: Check
         run: |
           sleep 10
           docker ps
-          docker logs --tail 100 shed
+          docker logs --tail 100 octoplex
 
-          echo ""
+          IP=$(sudo tailscale ip -4)
+
           echo "================================"
-          echo "OPEN SHED:"
-          echo "http://$(sudo tailscale ip -4):8080"
+          echo "WEB:"
+          echo "http://$IP:8080"
           echo "================================"
 
-      - name: Keep Shed running
+      - name: Keep running
         run: |
           while true; do
-            echo "Shed is running..."
-            docker ps --filter name=shed
+            docker ps --filter name=octoplex
             sleep 60
           done
